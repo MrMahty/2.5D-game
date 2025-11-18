@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Псевдо-3D игра — Raycaster с джойстиком и кнопками поворота</title>
+  <title>Псевдо-3D игра — Raycaster с джойстиком и картой сверху</title>
   <style>
     html,body{height:100%;margin:0;background:#111;color:#ddd;font-family:Segoe UI,Roboto,Arial}
     .wrap{display:flex;flex-direction:column;height:100%}
     header{padding:8px 12px;background:#0e0e0e;border-bottom:1px solid #222}
     header h1{margin:0;font-size:16px;font-weight:600}
-    #game{flex:1;display:flex;align-items:stretch}
+    #game{flex:1;display:flex;align-items:stretch;position:relative}
     canvas{background:#555;display:block;margin:auto;max-width:100%;height:auto}
     .hud{width:280px;min-width:220px;padding:12px;background:#0f0f0f;border-left:1px solid #222}
     .hint{font-size:13px;line-height:1.5;color:#bbb}
@@ -23,7 +23,7 @@
 <body>
   <div class="wrap">
     <header>
-      <h1>Псевдо-3D (raycaster) — джойстик и кнопки поворота</h1>
+      <h1>Псевдо-3D (raycaster) — джойстик и карта сверху</h1>
     </header>
     <div id="game">
       <canvas id="c" width="960" height="540"></canvas>
@@ -32,7 +32,7 @@
         <div class="small" id="info">Загрузка...</div>
       </div>
     </div>
-    <footer>Минимальный raycaster с джойстиком и кнопками для поворота камеры.</footer>
+    <footer>Минимальный raycaster с джойстиком и картой сверху.</footer>
   </div>
 
 <button id="modeBtn" style="position:fixed;top:10px;right:10px;z-index:10;">Mobile управление: выкл</button>
@@ -49,11 +49,10 @@
 </div>
 
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-let W = canvas.width, H = canvas.height;
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+let W=canvas.width,H=canvas.height;
 
-// карта и игрок
 const TILE=64;
 const MAP=[
   [1,1,1,1,1,1,1,1,1,1,1,1],
@@ -69,7 +68,7 @@ const MAP=[
   [1,0,0,0,0,0,0,0,0,0,0,1],
   [1,1,1,1,1,1,1,1,1,1,1,1]
 ];
-const MAP_W = MAP[0].length, MAP_H = MAP.length;
+const MAP_W=MAP[0].length,MAP_H=MAP.length;
 let player={x:TILE*2.5,y:TILE*2.5,dir:0,fov:Math.PI/3,speed:140};
 const keys={};
 window.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
@@ -78,25 +77,41 @@ window.addEventListener('blur',()=>{for(let k in keys)keys[k]=false;});
 function resetPlayer(){player.x=TILE*2.5;player.y=TILE*2.5;player.dir=0;}
 function isWall(x,y){const tx=Math.floor(x/TILE),ty=Math.floor(y/TILE);return tx<0||tx>=MAP_W||ty<0||ty>=MAP_H||MAP[ty][tx]!==0;}
 
-// отрисовка
 function castRays(){
   const numRays=W,halfH=H/2,stripWidth=1,angleStep=player.fov/numRays;
   let angle=player.dir-player.fov/2;
   ctx.fillStyle='#87ceeb';ctx.fillRect(0,0,W,halfH);
   ctx.fillStyle='#222';ctx.fillRect(0,halfH,W,halfH);
   for(let i=0;i<numRays;i++,angle+=angleStep){
-    let rx=Math.cos(angle),ry=Math.sin(angle),distance=0,hit=false,hx=0,hy=0;
+    let rx=Math.cos(angle),ry=Math.sin(angle),distance=0,hit=false;
     while(!hit&&distance<1000){distance+=1;
       const testX=Math.floor((player.x+rx*distance)/TILE),testY=Math.floor((player.y+ry*distance)/TILE);
       if(testX<0||testX>=MAP_W||testY<0||testY>=MAP_H){hit=true;break;}
-      if(MAP[testY][testX]>0){hit=true;hx=testX;hy=testY;}
+      if(MAP[testY][testX]>0){hit=true;}
     }
     const correctedDist=distance*Math.cos(angle-player.dir),wallHeight=(TILE*H)/(correctedDist+0.0001);
-    let shade=Math.max(0.2,1-correctedDist/800);
-    const baseColor=((hx+hy)&1)?[200,80,60]:[180,180,180];
-    ctx.fillStyle=`rgb(${Math.floor(baseColor[0]*shade)},${Math.floor(baseColor[1]*shade)},${Math.floor(baseColor[2]*shade)})`;
+    ctx.fillStyle=`rgb(${Math.floor(180*(1-correctedDist/800))},${Math.floor(180*(1-correctedDist/800))},${Math.floor(180*(1-correctedDist/800))})`;
     ctx.fillRect(i*stripWidth,halfH-wallHeight/2,stripWidth,wallHeight);
   }
+}
+
+function drawMap(){
+  const scale=0.2;
+  for(let y=0;y<MAP_H;y++){
+    for(let x=0;x<MAP_W;x++){
+      ctx.fillStyle=MAP[y][x]? '#888':'#222';
+      ctx.fillRect(x*TILE*scale,y*TILE*scale,TILE*scale,TILE*scale);
+    }
+  }
+  ctx.fillStyle='red';
+  ctx.beginPath();
+  ctx.arc(player.x*0.2,player.y*0.2,5,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='yellow';
+  ctx.beginPath();
+  ctx.moveTo(player.x*0.2,player.y*0.2);
+  ctx.lineTo(player.x*0.2+Math.cos(player.dir)*15,player.y*0.2+Math.sin(player.dir)*15);
+  ctx.stroke();
 }
 
 function update(dt){
@@ -109,14 +124,18 @@ function update(dt){
   const nx=player.x+moveX,ny=player.y+moveY;
   if(!isWall(nx,player.y))player.x=nx;else player.x+=(Math.sign(moveX)||0)*4;
   if(!isWall(player.x,ny))player.y=ny;else player.y+=(Math.sign(moveY)||0)*4;
-  // вращение через клавиши и кнопки
-  if(keys['q'])player.dir-=rotSpeed*dt;
-  if(keys['e'])player.dir+=rotSpeed*dt;
+  if(keys['q'])player.dir-=rotSpeed*dt;if(keys['e'])player.dir+=rotSpeed*dt;
   info.innerText=`x:${player.x.toFixed(1)} y:${player.y.toFixed(1)} dir:${(player.dir%(Math.PI*2)).toFixed(2)}`;
 }
 
 let last=performance.now();
-function step(now){const dt=(now-last)/1000;last=now;update(dt);castRays();requestAnimationFrame(step);}
+function step(now){
+  const dt=(now-last)/1000;last=now;
+  update(dt);
+  castRays();
+  drawMap();
+  requestAnimationFrame(step);
+}
 resetPlayer();requestAnimationFrame(step);
 
 // мобильный режим
