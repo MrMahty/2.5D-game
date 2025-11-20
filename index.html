@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Псевдо-3D Raycaster + Конструктор карт</title>
+  <style>
+    html,body{margin:0;height:100%;background:#111;color:#ddd;font-family:Segoe UI,Arial,sans-serif}
+    .wrap{display:flex;flex-direction:column;height:100%}
+    header,footer{padding:6px 10px;background:#050505;border-color:#222;border-style:solid;border-width:0 0 1px}
+    footer{border-width:1px 0 0;font-size:13px}
+    #content{flex:1;display:flex;overflow:hidden}
+
+    /* редактор */
+    #editorPane{flex:1;display:flex;flex-direction:row}
+    #editorLeft{width:280px;padding:8px 10px;background:#0b0b0b;border-right:1px solid #222;font-size:13px;box-sizing:border-box}
+    #editorRight{flex:1;display:flex;align-items:center;justify-content:center}
+    #grid{display:grid;gap:2px;background:#111;padding:6px;border-radius:4px}
+    .cell{width:24px;height:24px;border-radius:3px;cursor:pointer;box-sizing:border-box}
+    .c-empty{background:#202020}
+    .c-wall{background:#888}
+    .c-border{background:#555}
+    .c-player{background:#00c853}
+    .toolbar label{display:block;margin-top:4px}
+    .toolbar input[type="number"]{width:60px;margin-left:4px}
+    .toolbar button{margin:3px 0;padding:3px 6px;font-size:12px}
+    #mapJson{width:100%;height:80px;background:#111;border:1px solid #333;color:#ddd;font-size:11px}
+
+    /* игра */
+    #gamePane{flex:1;display:none}
+    #gameInner{flex:1;display:flex}
+    canvas{background:#000;display:block;margin:auto;max-width:100%;height:auto}
+    .hud{width:260px;padding:8px 10px;background:#0b0b0b;border-left:1px solid #222;font-size:13px;box-sizing:border-box}
+
+    #modeBtn{position:fixed;top:8px;right:8px;z-index:10}
+    #joystickControls{position:fixed;bottom:18px;left:18px;display:none;z-index:20}
+    #joystick{width:120px;height:120px;border-radius:50%;background:#0008;position:relative;touch-action:none}
+    #stick{width:54px;height:54px;border-radius:50%;background:#fffdd;position:absolute;left:33px;top:33px;transform:translate(0,0)}
+    #rotationButtons{position:fixed;bottom:18px;right:18px;display:none;flex-direction:column;gap:5px;z-index:20}
+    #rotationButtons button{width:60px;height:40px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header><b>Псевдо-3D Raycaster — Конструктор карт</b></header>
+
+  <div id="content">
+    <!-- РЕДАКТОР КАРТ -->
+    <div id="editorPane">
+      <div id="editorLeft">
+        <div class="toolbar">
+          <b>Размер карты</b><br>
+          <label>Ширина:
+            <input id="wInput" type="number" min="4" max="32" value="12">
+          </label>
+          <label>Высота:
+            <input id="hInput" type="number" min="4" max="32" value="12">
+          </label>
+          <button id="applySizeBtn">Применить размер</button>
+          <button id="clearBtn">Очистить (кроме границ)</button>
+          <hr>
+          <b>Инструмент</b><br>
+          <button id="toolWallsBtn">Режим: стены</button>
+          <button id="toolPlayerBtn">Режим: игрок</button>
+          <small id="toolInfo">Текущий: стены</small>
+          <hr>
+          <b>Стартовая позиция</b><br>
+          <small>В режиме "игрок" кликните по клетке.</small>
+          <hr>
+          <b>Сохранение карты</b><br>
+          <button id="saveLocalBtn">Сохранить в браузер</button>
+          <button id="loadLocalBtn">Загрузить из браузера</button>
+          <hr>
+          <b>Экспорт / импорт JSON</b><br>
+          <textarea id="mapJson" placeholder='Здесь будет JSON карты'></textarea>
+          <button id="exportJsonBtn">Экспорт в JSON</button>
+          <button id="importJsonBtn">Импорт из JSON</button>
+          <hr>
+          <button id="startGameBtn" style="width:100%;padding:5px 0;"><b>СТАРТ ИГРЫ</b></button>
+          <small>После старта: игра в 3D на основе этой карты.</small>
+        </div>
+      </div>
+      <div id="editorRight">
+        <div>
+          <div style="text-align:center;margin-bottom:4px;">Карта (клик — редактировать)</div>
+          <div id="grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ИГРОВОЙ РЕЖИМ -->
+    <div id="gamePane">
+      <div id="gameInner">
+        <canvas id="c" width="960" height="540"></canvas>
+        <div class="hud">
+          <div>Инфо:</div>
+          <div id="info">Загрузка текстур...</div>
+        </div>
+      </div>
+      <button id="modeBtn">Mobile: выкл</button>
+      <div id="joystickControls">
+        <div id="joystick"><div id="stick"></div></div>
+      </div>
+      <div id="rotationButtons">
+        <button id="turnLeft">⟲</button>
+        <button id="turnRight">⟳</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>1) Скрой / покажи стены в редакторе. 2) Поставь игрока. 3) Жми "СТАРТ ИГРЫ". Управление в игре: WASD / Q,E / ← →.</footer>
+</div>
+
+<script>
+// =======================
+// ВСТРОЕННАЯ ТЕКСТУРА СТЕНЫ
+// =======================
+const WALL_DATA =
+  "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";
+
+const TEX = {
+  wall: "data:image/png;base64,"+WALL_DATA,
+  sky:  "https://textur.gas-kvas.com/uploads/posts/2024-10/textur-gas-kvas-com-971q-p-teksturi-pikselnogo-neba-2.jpg"
+};
+
+// =======================
+// РЕДАКТОР КАРТ
+// =======================
+const gridEl = document.getElementById('grid');
+const wInput = document.getElementById('wInput');
+const hInput = document.getElementById('hInput');
+const toolWallsBtn = document.getElementById('toolWallsBtn');
+const toolPlayerBtn = document.getElementById('toolPlayerBtn');
+const toolInfo = document.getElementById('toolInfo');
+const applySizeBtn = document.getElementById('applySizeBtn');
+const clearBtn = document.getElementById('clearBtn');
+const saveLocalBtn = document.getElementById('saveLocalBtn');
+const loadLocalBtn = document.getElementById('loadLocalBtn');
+const exportJsonBtn = document.getElementById('exportJsonBtn');
+const importJsonBtn = document.getElementById('importJsonBtn');
+const mapJson = document.getElementById('mapJson');
+const startGameBtn = document.getElementById('startGameBtn');
+const editorPane = document.getElementById('editorPane');
+const gamePane = document.getElementById('gamePane');
+
+let editW = 12, editH = 12;
+let editMap = [];
+let tool = "walls"; // "walls" | "player"
+let playerCell = null; // {x,y}
+
+// создать новую карту с размерами
+function createEmptyMap(w,h){
+  const m=[];
+  for(let y=0;y<h;y++){
+    const row=[];
+    for(let x=0;x<w;x++){
+      // границы делаем стенами
+      row.push((x===0||y===0||x===w-1||y===h-1)?1:0);
+    }
+    m.push(row);
+  }
+  return m;
+}
+
+function renderGrid(){
+  gridEl.innerHTML="";
+  gridEl.style.gridTemplateColumns = `repeat(${editW}, 24px)`;
+  for(let y=0;y<editH;y++){
+    for(let x=0;x<editW;x++){
+      const div=document.createElement('div');
+      div.classList.add('cell');
+      const isBorder = (x===0||y===0||x===editW-1||y===editH-1);
+      const v = editMap[y][x];
+      if(playerCell && playerCell.x===x && playerCell.y===y){
+        div.classList.add('c-player');
+      }else if(isBorder){
+        div.classList.add('c-border');
+      }else if(v===1){
+        div.classList.add('c-wall');
+      }else{
+        div.classList.add('c-empty');
+      }
+      div.dataset.x=x;
+      div.dataset.y=y;
+      div.onclick = ()=>{
+        cellClick(x,y,isBorder);
+      };
+      gridEl.appendChild(div);
+    }
+  }
+}
+
+function cellClick(x,y,isBorder){
+  if(isBorder && tool!=="player") return; // границы стен нельзя выключить
+  if(tool==="walls"){
+    // переключаем 0/1
+    if(x===0||y===0||x===editW-1||y===editH-1) return; // границу не трогаем
+    editMap[y][x] = editMap[y][x] ? 0 : 1;
+  }else if(tool==="player"){
+    if(editMap[y][x]===1) return; // не ставим в стену
+    playerCell = {x,y};
+  }
+  renderGrid();
+}
+
+function setTool(t){
+  tool = t;
+  toolInfo.textContent = "Текущий: " + (t==="walls"?"стены":"игрок");
+}
+
+toolWallsBtn.onclick = ()=>setTool("walls");
+toolPlayerBtn.onclick = ()=>setTool("player");
+
+applySizeBtn.onclick = ()=>{
+  const w = Math.max(4, Math.min(32, parseInt(wInput.value)||12));
+  const h = Math.max(4, Math.min(32, parseInt(hInput.value)||12));
+  editW = w; editH = h;
+  editMap = createEmptyMap(editW,editH);
+  playerCell = null;
+  renderGrid();
+};
+
+clearBtn.onclick = ()=>{
+  for(let y=0;y<editH;y++){
+    for(let x=0;x<editW;x++){
+      if(x===0||y===0||x===editW-1||y===editH-1) editMap[y][x]=1;
+      else editMap[y][x]=0;
+    }
+  }
+  playerCell = null;
+  renderGrid();
+};
+
+saveLocalBtn.onclick = ()=>{
+  const data = {w:editW,h:editH,map:editMap,player:playerCell};
+  localStorage.setItem("ray_map_editor", JSON.stringify(data));
+  alert("Карта сохранена в браузер.");
+};
+
+loadLocalBtn.onclick = ()=>{
+  const raw = localStorage.getItem("ray_map_editor");
+  if(!raw){alert("В браузере нет сохранённой карты.");return;}
+  try{
+    const data = JSON.parse(raw);
+    editW=data.w; editH=data.h; editMap=data.map; playerCell=data.player;
+    wInput.value=editW; hInput.value=editH;
+    renderGrid();
+  }catch(e){
+    console.error(e);
+    alert("Ошибка чтения сохранённой карты.");
+  }
+};
+
+exportJsonBtn.onclick = ()=>{
+  const data = {w:editW,h:editH,map:editMap,player:playerCell};
+  mapJson.value = JSON.stringify(data);
+};
+
+importJsonBtn.onclick = ()=>{
+  try{
+    const data = JSON.parse(mapJson.value);
+    editW=data.w; editH=data.h; editMap=data.map; playerCell=data.player;
+    wInput.value=editW; hInput.value=editH;
+    renderGrid();
+  }catch(e){
+    console.error(e);
+    alert("Неверный JSON.");
+  }
+};
+
+// инициализация редактора по умолчанию
+editMap = createEmptyMap(editW,editH);
+renderGrid();
+setTool("walls");
+
+// =======================
+// ИГРОВОЙ ДВИЖОК (Raycaster)
+// =======================
+
+const c = document.getElementById('c'), ctx = c.getContext('2d'), W = c.width, H = c.height;
+const info = document.getElementById('info');
+const TILE = 64;
+
+let MAP = editMap; let MW = editW; let MH = editH;
+let player = {x:TILE*2.5,y:TILE*2.5,dir:0,fov:Math.PI/3,speed:140};
+
+const keys = {};
+window.addEventListener('keydown',e=>{
+  switch(e.code){
+    case"KeyW":keys.w=true;break; case"KeyS":keys.s=true;break;
+    case"KeyA":keys.a=true;break; case"KeyD":keys.d=true;break;
+    case"KeyQ":case"ArrowLeft":keys.q=true;break;
+    case"KeyE":case"ArrowRight":keys.e=true;break;
+  }
+});
+window.addEventListener('keyup',e=>{
+  switch(e.code){
+    case"KeyW":keys.w=false;break; case"KeyS":keys.s=false;break;
+    case"KeyA":keys.a=false;break; case"KeyD":keys.d=false;break;
+    case"KeyQ":case"ArrowLeft":keys.q=false;break;
+    case"KeyE":case"ArrowRight":keys.e=false;break;
+  }
+});
+window.addEventListener('blur',()=>{for(let k in keys)keys[k]=false;});
+
+const isWall=(x,y)=>{
+  const tx=Math.floor(x/TILE), ty=Math.floor(y/TILE);
+  return tx<0||ty<0||tx>=MW||ty>=MH||MAP[ty][tx]!==0;
+};
+
+const textures={};
+function loadImg(src){return new Promise((res,rej)=>{const i=new Image;i.onload=()=>res(i);i.onerror=rej;i.src=src;});}
+let texturesLoaded=false;
+
+async function loadAll(){
+  info.textContent="Загружаю текстуры…";
+  try{
+    [textures.wall,textures.sky]=await Promise.all([
+      loadImg(TEX.wall), loadImg(TEX.sky)
+    ]);
+    texturesLoaded=true;
+    info.textContent="Текстуры готовы. Жмите СТАРТ ИГРЫ.";
+  }catch(e){
+    console.error(e);
+    info.textContent="Ошибка загрузки текстур";
+  }
+}
+
+// рендер сцены
+function cast(){
+  const halfH=H/2, nRays=W, step=player.fov/nRays;
+  let ang=player.dir-player.fov/2;
+
+  // небо
+  if(textures.sky){
+    const img=textures.sky, w=img.width, off=((player.dir/(Math.PI*2))%1)*w;
+    const scale=Math.max(1,W/w), drawW=w*scale;
+    for(let x=-drawW+(-off*scale%drawW);x<W;x+=drawW)
+      ctx.drawImage(img,0,0,w,img.height,x,0,drawW,halfH);
+  }else{
+    ctx.fillStyle="#87ceeb";
+    ctx.fillRect(0,0,W,halfH);
+  }
+
+  // пол — однотонный коричневый
+  ctx.fillStyle="#5c3b1e";
+  ctx.fillRect(0,halfH,W,halfH);
+
+  // стены
+  for(let i=0;i<nRays;i++,ang+=step){
+    let rx=Math.cos(ang),ry=Math.sin(ang),dist=0,hit=false,hx=0,hy=0;
+    while(!hit&&dist<2000){
+      dist+=1;
+      const tx=Math.floor((player.x+rx*dist)/TILE),
+            ty=Math.floor((player.y+ry*dist)/TILE);
+      if(tx<0||ty<0||tx>=MW||ty>=MH){hit=true;break;}
+      if(MAP[ty][tx]){
+        hit=true;hx=player.x+rx*dist;hy=player.y+ry*dist;break;
+      }
+    }
+    const d=dist*Math.cos(ang-player.dir)+0.0001;
+    const h=(TILE*H)/d, halfWall=h/2;
+    let u=0;
+    if(hit){
+      const fx=(hx%TILE+TILE)%TILE, fy=(hy%TILE+TILE)%TILE;
+      const dx=Math.min(fx,TILE-fx),dy=Math.min(fy,TILE-fy);
+      u=(dx<dy?fy:fx)/TILE;
+    }
+    if(textures.wall&&hit){
+      const tex=textures.wall, tw=tex.width, th=tex.height;
+      const sx=Math.floor(u*tw);
+      ctx.drawImage(tex,sx,0,1,th,i,halfH-halfWall,1,h);
+    }else{
+      let shade=Math.max(0,Math.floor(200*(1-d/800)));
+      ctx.fillStyle=`rgb(${shade},${shade},${shade})`;
+      ctx.fillRect(i,halfH-halfWall,1,h);
+    }
+  }
+}
+
+// мини-карта
+function drawMap(){
+  const s=0.2;
+  for(let y=0;y<MH;y++)for(let x=0;x<MW;x++){
+    ctx.fillStyle=MAP[y][x]?"#777":"#222";
+    ctx.fillRect(x*TILE*s,y*TILE*s,TILE*s,TILE*s);
+  }
+  ctx.fillStyle="red";
+  ctx.beginPath();ctx.arc(player.x*s,player.y*s,5,0,Math.PI*2);ctx.fill();
+}
+
+// движение
+function update(dt){
+  const m=player.speed*dt, r=2.5; let mx=0,my=0;
+  if(keys.w){mx+=Math.cos(player.dir)*m;my+=Math.sin(player.dir)*m;}
+  if(keys.s){mx-=Math.cos(player.dir)*m;my-=Math.sin(player.dir)*m;}
+  if(keys.a){mx+=Math.cos(player.dir-Math.PI/2)*m;my+=Math.sin(player.dir-Math.PI/2)*m;}
+  if(keys.d){mx+=Math.cos(player.dir+Math.PI/2)*m;my+=Math.sin(player.dir+Math.PI/2)*m;}
+  const nx=player.x+mx, ny=player.y+my, R=12;
+  if(!isWall(nx+R,player.y)&&!isWall(nx-R,player.y)&&!isWall(nx,player.y+R)&&!isWall(nx,player.y-R))player.x=nx;
+  if(!isWall(player.x,ny+R)&&!isWall(player.x,ny-R)&&!isWall(player.x+R,ny)&&!isWall(player.x-R,ny))player.y=ny;
+  if(keys.q)player.dir-=r*dt;
+  if(keys.e)player.dir+=r*dt;
+  info.textContent=`x:${player.x.toFixed(1)} y:${player.y.toFixed(1)} dir:${(player.dir%(Math.PI*2)).toFixed(2)}`;
+}
+
+// цикл
+let last=performance.now();
+let gameRunning=false;
+function loop(t){
+  if(!gameRunning) return;
+  const dt=(t-last)/1000; last=t;
+  ctx.clearRect(0,0,W,H);
+  update(dt); cast(); drawMap();
+  requestAnimationFrame(loop);
+}
+function startGameLoop(){
+  if(gameRunning) return;
+  gameRunning=true;
+  last=performance.now();
+  requestAnimationFrame(loop);
+}
+
+// мобильный джойстик
+let mobile=false, jx=0,jy=0,active=null;
+const modeBtn=document.getElementById('modeBtn');
+const joy=document.getElementById('joystick'), stick=document.getElementById('stick');
+const jc=document.getElementById('joystickControls'), rb=document.getElementById('rotationButtons');
+modeBtn.onclick=()=>{
+  mobile=!mobile;
+  jc.style.display=mobile?"block":"none";
+  rb.style.display=mobile?"flex":"none";
+  modeBtn.textContent="Mobile: "+(mobile?"вкл":"выкл");
+};
+function setStick(dx,dy){stick.style.transform=`translate(${dx}px,${dy}px)`;}
+function updJoy(x,y){
+  const r=joy.getBoundingClientRect(), max=40;
+  let dx=x-(r.left+r.width/2), dy=y-(r.top+r.height/2);
+  const d=Math.hypot(dx,dy); if(d>max){dx=dx/d*max;dy=dy/d*max;}
+  setStick(dx,dy); jx=dx/max; jy=dy/max;
+  const dead=0.2;
+  if(Math.abs(jx)<dead)jx=0; if(Math.abs(jy)<dead)jy=0;
+}
+joy.addEventListener('pointerdown',e=>{joy.setPointerCapture(e.pointerId);active=e.pointerId;updJoy(e.clientX,e.clientY);});
+joy.addEventListener('pointermove',e=>{if(active===e.pointerId)updJoy(e.clientX,e.clientY);});
+function joyEnd(e){if(active!==e.pointerId)return;joy.releasePointerCapture(e.pointerId);active=null;jx=jy=0;setStick(0,0);}
+joy.addEventListener('pointerup',joyEnd);joy.addEventListener('pointercancel',joyEnd);
+
+setInterval(()=>{if(mobile){keys.w=jy<-0.01;keys.s=jy>0.01;keys.a=jx<-0.01;keys.d=jx>0.01;}},16);
+document.getElementById('turnLeft').onpointerdown=()=>keys.q=true;
+document.getElementById('turnLeft').onpointerup =()=>keys.q=false;
+document.getElementById('turnRight').onpointerdown=()=>keys.e=true;
+document.getElementById('turnRight').onpointerup =()=>keys.e=false;
+
+// кнопка СТАРТА
+startGameBtn.onclick = ()=>{
+  if(!playerCell){
+    alert("Сначала поставь старт игрока (режим 'игрок' и клик по клетке).");
+    return;
+  }
+  if(!texturesLoaded){
+    alert("Текстуры ещё грузятся. Подожди, пока в правом блоке будет 'Текстуры готовы'.");
+    return;
+  }
+  // применяем карту
+  MAP = editMap;
+  MW = editW;
+  MH = editH;
+  player.x = (playerCell.x+0.5)*TILE;
+  player.y = (playerCell.y+0.5)*TILE;
+  player.dir = 0;
+
+  // переключаемся в игровой режим
+  editorPane.style.display="none";
+  gamePane.style.display="flex";
+
+  startGameLoop();
+};
+
+// загружаем текстуры при старте страницы
+loadAll();
+</script>
+</body>
+</html>
